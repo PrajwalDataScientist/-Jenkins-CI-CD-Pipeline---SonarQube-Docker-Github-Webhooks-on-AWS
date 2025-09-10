@@ -1,63 +1,36 @@
 pipeline {
     agent any
 
-    environment {
-        SONARQUBE = 'SonarQube'                // Name in Jenkins SonarQube configuration
-        DOCKER_IMAGE = 'myapp-image'           // Docker image name
-        APP_NAME = 'myapp'                     // Container name
-        DOCKER_SERVER = 'ubuntu@13.60.18.95'  // Docker EC2 public IP
-        SSH_KEY = '/home/ubuntu/.ssh/id_rsa_docker'  // Private key path on Jenkins
-    }
-
     stages {
-        stage('Checkout') {
+        stage('Git Checkout') {
             steps {
-                echo 'Cloning GitHub repository...'
-                git 'https://github.com/PrajwalDataScientist/-Jenkins-CI-CD-Pipeline---SonarQube-Docker-Github-Webhooks-on-AWS.git'
+                git branch: 'main', url: 'https://github.com/PrajwalDataScientist/-Jenkins-CI-CD-Pipeline---SonarQube-Docker-Github-Webhooks-on-AWS.git'
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
-                echo 'Running SonarQube scan...'
                 withSonarQubeEnv('SonarQube') {
-                    sh 'sonar-scanner -Dsonar.projectKey=myapp -Dsonar.sources=.'
+                    sh 'sonar-scanner -Dsonar.projectKey=git-pipeline -Dsonar.sources=.'
                 }
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Deploy to Docker EC2') {
             steps {
-                echo 'Building Docker image locally...'
-                sh "docker build -t ${DOCKER_IMAGE} ."
+                sshagent(['docker-ec2-key']) {
+                    sh '''
+                    ssh -o StrictHostKeyChecking=no ubuntu@13.60.18.95 "
+                    cd ~/myapp || mkdir -p ~/myapp
+                    git pull origin main
+                    docker stop myapp || true
+                    docker rm myapp || true
+                    docker build -t myapp-image .
+                    docker run -d --name myapp -p 80:80 myapp-image
+                    "
+                    '''
+                }
             }
-        }
-
-        stage('Deploy to Docker Server') {
-            steps {
-                echo 'Deploying container to Docker EC2 via SSH...'
-                sh """
-                ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ${DOCKER_SERVER} '
-                    docker stop ${APP_NAME} || true
-                    docker rm ${APP_NAME} || true
-                    mkdir -p ~/app-deploy
-                    cd ~/app-deploy
-                    rm -rf *
-                    git clone https://github.com/PrajwalDataScientist/-Jenkins-CI-CD-Pipeline---SonarQube-Docker-Github-Webhooks-on-AWS.git .
-                    docker build -t ${DOCKER_IMAGE} .
-                    docker run -d --name ${APP_NAME} -p 80:80 ${DOCKER_IMAGE}
-                '
-                """
-            }
-        }
-    }
-
-    post {
-        success {
-            echo 'Pipeline completed successfully ✅'
-        }
-        failure {
-            echo 'Pipeline failed ❌'
         }
     }
 }
